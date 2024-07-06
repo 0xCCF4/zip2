@@ -101,24 +101,28 @@ impl<'a, T: ReadAndSupplyExpectedCRC32 + 'a> ReadAndSupplyExpectedCRC32 for Cryp
     }
 }
 
+#[cfg(feature = "_deflate-any")]
 impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for DeflateDecoder<T> {
     fn get_crc32(&self) -> io::Result<u32> {
         self.get_ref().get_crc32()
     }
 }
 
+#[cfg(feature = "deflate64")]
 impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for Deflate64Decoder<BufReader<T>> {
     fn get_crc32(&self) -> io::Result<u32> {
         self.get_ref().get_ref().get_crc32()
     }
 }
 
+#[cfg(feature = "bzip2")]
 impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for BzDecoder<T> {
     fn get_crc32(&self) -> io::Result<u32> {
         self.get_ref().get_crc32()
     }
 }
 
+#[cfg(feature = "zstd")]
 impl<'a, T: ReadAndSupplyExpectedCRC32 + BufRead> ReadAndSupplyExpectedCRC32
     for zstd::Decoder<'a, T>
 {
@@ -127,6 +131,7 @@ impl<'a, T: ReadAndSupplyExpectedCRC32 + BufRead> ReadAndSupplyExpectedCRC32
     }
 }
 
+#[cfg(feature = "zstd")]
 impl<'a, T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32
     for zstd::Decoder<'a, BufReader<T>>
 {
@@ -135,6 +140,7 @@ impl<'a, T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32
     }
 }
 
+#[cfg(feature = "lzma")]
 impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for LzmaDecoder<T> {
     fn get_crc32(&self) -> io::Result<u32> {
         self.get_ref().get_crc32()
