@@ -49,6 +49,9 @@ pub(crate) mod stream;
 #[cfg(feature = "lzma")]
 pub(crate) mod lzma;
 
+#[cfg(feature = "xz")]
+pub(crate) mod xz;
+
 // Put the struct declaration in a private module to convince rustdoc to display ZipArchive nicely
 pub(crate) mod zip_archive {
     use indexmap::IndexMap;
@@ -123,6 +126,8 @@ use crate::aes::PWD_VERIFY_LENGTH;
 use crate::extra_fields::UnicodeExtraField;
 #[cfg(feature = "lzma")]
 use crate::read::lzma::LzmaDecoder;
+#[cfg(feature = "xz")]
+use crate::read::xz::XzDecoder;
 use crate::result::ZipError::{InvalidArchive, InvalidPassword, UnsupportedArchive};
 use crate::spec::is_dir;
 use crate::types::ffi::S_IFLNK;
@@ -200,6 +205,8 @@ pub(crate) enum ZipFileReader<'a, T: ReadAndSupplyExpectedCRC32 + 'a> {
     Zstd(Crc32Reader<ZstdDecoder<'a, io::BufReader<CryptoReader<'a, T>>>>),
     #[cfg(feature = "lzma")]
     Lzma(Crc32Reader<Box<LzmaDecoder<CryptoReader<'a, T>>>>),
+    #[cfg(feature = "xz")]
+    Xz(Crc32Reader<XzDecoder<CryptoReader<'a>>>),
 }
 
 impl<'a, T: ReadAndSupplyExpectedCRC32 + 'a> Read for ZipFileReader<'a, T> {
@@ -218,6 +225,8 @@ impl<'a, T: ReadAndSupplyExpectedCRC32 + 'a> Read for ZipFileReader<'a, T> {
             ZipFileReader::Zstd(r) => r.read(buf),
             #[cfg(feature = "lzma")]
             ZipFileReader::Lzma(r) => r.read(buf),
+            #[cfg(feature = "xz")]
+            ZipFileReader::Xz(r) => r.read(buf),
         }
     }
 }
@@ -246,6 +255,8 @@ impl<'a, T: ReadAndSupplyExpectedCRC32 + 'a> ZipFileReader<'a, T> {
                 }
                 return;
             }
+            #[cfg(feature = "xz")]
+            ZipFileReader::Xz(r) => r.into_inner().into_inner().into_inner(),
         };
         let _ = copy(&mut inner, &mut sink());
     }
@@ -399,6 +410,15 @@ pub(crate) fn make_reader<T: ReadAndSupplyExpectedCRC32>(
             let reader = LzmaDecoder::new(reader);
             Ok(ZipFileReader::Lzma(Crc32Reader::new(
                 Box::new(reader),
+                ae2_encrypted,
+            )))
+        }
+        #[cfg(feature = "xz")]
+        CompressionMethod::Xz => {
+            let reader = XzDecoder::new(reader);
+            Ok(ZipFileReader::Xz(Crc32Reader::new(
+                reader,
+                crc32,
                 ae2_encrypted,
             )))
         }
