@@ -164,10 +164,10 @@ impl<'a, T: Read + 'a> CryptoReader<'a, T> {
 
     pub fn get_ref(&self) -> &T {
         match self {
-            CryptoReader::Plaintext(r, _) => &r,
-            CryptoReader::ZipCrypto(r) => &r.get_ref(),
+            CryptoReader::Plaintext(r, _) => r,
+            CryptoReader::ZipCrypto(r) => r.get_ref(),
             #[cfg(feature = "aes-crypto")]
-            CryptoReader::Aes { reader: r, .. } => &r.get_ref(),
+            CryptoReader::Aes { reader: r, .. } => r.get_ref(),
         }
     }
 
@@ -258,7 +258,7 @@ pub struct ZipFile<'a> {
     pub(crate) reader: ZipFileReader<'a, Box<dyn ReadAndSupplyExpectedCRC32 + 'a>>,
 }
 
-pub(crate) fn find_content<'a, T: Read + Seek>(
+pub(crate) fn find_content<T: Read + Seek>(
     data: &ZipFileData,
     mut reader: T,
 ) -> ZipResult<InitiallyKnownCRC32<io::Take<T>>> {
@@ -1724,7 +1724,7 @@ impl<'a, T: Read> Read for ReadBufferThenForward<'a, T> {
 struct ReadTillDataDescriptor<T: Read> {
     reader: T,
     data_descriptor_found: Option<ZipDataDescriptor>,
-    look_ahead_buffer: Vec<u8>,
+    look_ahead_buffer: Vec<u8>,      // TODO: change this to VecDeque
     number_read_total_actual: usize, // without look ahead buffer
 }
 
@@ -1748,21 +1748,20 @@ impl<T: Read> ReadTillDataDescriptor<T> {
 
 impl<T: Read> ReadTillDataDescriptor<T> {
     fn has_found_data_descriptor(&self) -> Option<ZipDataDescriptor> {
-        if spec::Magic::from_first_le_bytes(&self.look_ahead_buffer)
-            == spec::Magic::DATA_DESCRIPTOR_SIGNATURE
-        {
-            // potentially found a data descriptor
-            // check if size matches
-            let data_descriptor = match ZipDataDescriptor::interpret(&self.look_ahead_buffer) {
-                Ok(data_descriptor) => data_descriptor,
-                Err(_) => return None,
-            };
-            let data_descriptor_size = data_descriptor.compressed_size;
+        let Ok(data_descriptor) = ZipDataDescriptor::interpret(&self.look_ahead_buffer) else {
+            return None;
+        };
 
-            if data_descriptor_size == self.number_read_total_actual as u32 {
-                return Some(data_descriptor);
-            }
+        // potentially found a data descriptor
+        // check if size matches
+
+        let data_descriptor_size = data_descriptor.compressed_size;
+
+        if data_descriptor_size == self.number_read_total_actual as u32 {
+            // TODO: check CRC32 here as well
+            return Some(data_descriptor);
         }
+
         None
     }
 
@@ -1772,6 +1771,10 @@ impl<T: Read> ReadTillDataDescriptor<T> {
 
         if read_count > 0 {
             let value = self.look_ahead_buffer.remove(0);
+            /* .ok_or(io::Error::new(
+                io::ErrorKind::Other,
+                "Look ahead buffer is empty. This should not have happened!?",
+            ))?; */
             self.look_ahead_buffer.push(byte_buffer[0]);
             self.number_read_total_actual += 1;
             Ok(Some(value))
@@ -1792,17 +1795,17 @@ impl<T: Read> ReadTillDataDescriptor<T> {
 
 impl<T: Read> Read for ReadTillDataDescriptor<T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        for index in 0..buf.len() {
+        for (index, buf_value) in buf.iter_mut().enumerate() {
             let data_descriptor = self.has_found_data_descriptor();
 
-            if let Some(_) = data_descriptor {
+            if data_descriptor.is_some() {
                 self.data_descriptor_found = data_descriptor;
                 return Ok(index);
             }
 
             match self.read_a_byte()? {
                 None => return Ok(index),
-                Some(value) => buf[index] = value,
+                Some(value) => *buf_value = value,
             }
         }
         Ok(buf.len())
@@ -1825,13 +1828,12 @@ impl<T: Read> ReadAndSupplyExpectedCRC32 for ReadTillDataDescriptor<T> {
 ///
 /// This method operates in three different modes:
 /// 1. data_descriptor=None and allow_unlimited_read=false : Parse the local file header and return zip file. Works if data descriptors are not used.
-/// 2. data_descriptor=Some and allow_unlimited_read=false : Parse the local file header, augment the zip file with the size given in the data descriptor and return zip file. Works if data descriptors are used.
-/// 3. data_descriptor=None and allow_unlimited_read=true : Parse the local file header, if data descriptors not used, fallback to case 1, else provide a ZipFile that
+/// 2. data_descriptor=None and allow_unlimited_read=true : Parse the local file header, if data descriptors not used, fallback to case 1, else provide a ZipFile that
 ///     searches for the data descriptor in the file. It just starts reading the compressed stream with no size limit set. When detecting a data descriptor the
 ///     stream is closed. This is useful when the size of the compressed stream is unknown but brings some security risks. Therefore, returning an UntrustedValue.
-/// 4. data_descriptor=Some and allow_unlimited_read=true : Fallback to case 2
+/// 3. data_descriptor=Some : Parse the local file header, augment the zip file with the size given in the data descriptor and return zip file. Works if data descriptors are used.
 ///
-/// Case 3: **Security-disclaimer**: The **output** should **not** be regarded as **secure/trustworthy**.
+/// Case 2: **Security-disclaimer**: The **output** should **not** be regarded as **secure/trustworthy**.
 /// When an attacker has control over a file which is compressed into a zip: The file might be crafted such that
 /// when reading with ZipArchive vs this function a parsing mismatch can occur. An attacker that has control over a file
 /// can manipulate such file such that this function will regard parts of the file as new zip file entry. The attacker might
@@ -1842,18 +1844,19 @@ fn read_zipfile_from_fileblock<'a, R: Read>(
     data_descriptor: Option<ZipDataDescriptor>,
     mut allow_unlimited_read: bool,
 ) -> ZipResult<MaybeUntrusted<Option<ZipFile<'_>>>> {
-    if data_descriptor.is_some() && allow_unlimited_read {
+    if data_descriptor.is_some() {
         allow_unlimited_read = false; // fallback, size is given
     }
 
     let size_unknown = data_descriptor.is_none() && block.block.flags & (1 << 3) == 1 << 3; // no data descriptor provided but should exist
-    let mut result = ZipFileData::from_local_block(block, data_descriptor, allow_unlimited_read)?;
 
     if size_unknown && !allow_unlimited_read {
         return Err(ZipError::UnsupportedArchive(
             "Archive is using data descriptors, but unlimited reading not enabled",
         ));
     }
+
+    let mut result = ZipFileData::from_local_block(block, data_descriptor, allow_unlimited_read)?;
 
     match crate::read::parse_extra_field(&mut result) {
         Ok(..) | Err(ZipError::Io(..)) => {}

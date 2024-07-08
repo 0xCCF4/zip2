@@ -45,7 +45,7 @@ impl<R: Read> ZipStreamReader<R> {
 
         loop {
             let file = read_zipfile_from_stream(&mut self.0)?;
-            untrusted = untrusted | file.is_untrusted();
+            untrusted |= file.is_untrusted();
 
             let file = file.use_untrusted_value();
             match file {
