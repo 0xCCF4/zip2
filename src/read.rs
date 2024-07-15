@@ -206,7 +206,7 @@ pub(crate) enum ZipFileReader<'a, T: ReadAndSupplyExpectedCRC32 + 'a> {
     #[cfg(feature = "lzma")]
     Lzma(Crc32Reader<Box<LzmaDecoder<CryptoReader<'a, T>>>>),
     #[cfg(feature = "xz")]
-    Xz(Crc32Reader<XzDecoder<CryptoReader<'a>>>),
+    Xz(Crc32Reader<XzDecoder<CryptoReader<'a, T>>>),
 }
 
 impl<'a, T: ReadAndSupplyExpectedCRC32 + 'a> Read for ZipFileReader<'a, T> {
@@ -418,7 +418,6 @@ pub(crate) fn make_reader<T: ReadAndSupplyExpectedCRC32>(
             let reader = XzDecoder::new(reader);
             Ok(ZipFileReader::Xz(Crc32Reader::new(
                 reader,
-                crc32,
                 ae2_encrypted,
             )))
         }

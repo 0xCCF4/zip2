@@ -10,6 +10,7 @@ use crate::read::CryptoReader;
 use crc32fast::Hasher;
 use deflate64::Deflate64Decoder;
 use flate2::read::DeflateDecoder;
+use crate::read::xz::XzDecoder;
 
 /// Reader that validates the CRC32 when it reaches the EOF.
 pub struct Crc32Reader<R: ReadAndSupplyExpectedCRC32> {
@@ -144,6 +145,13 @@ impl<'a, T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32
 impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for LzmaDecoder<T> {
     fn get_crc32(&self) -> io::Result<u32> {
         self.get_ref().get_crc32()
+    }
+}
+
+#[cfg(feature = "xz")]
+impl<T: ReadAndSupplyExpectedCRC32> ReadAndSupplyExpectedCRC32 for XzDecoder<T> {
+    fn get_crc32(&self) -> io::Result<u32> {
+        self.as_ref().get_crc32()
     }
 }
 
