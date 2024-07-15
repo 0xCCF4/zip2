@@ -18,7 +18,7 @@ pub struct Crc32Reader<R: ReadAndSupplyExpectedCRC32> {
     hasher: Hasher,
     /// Signals if `inner` stores aes encrypted data.
     /// AE-2 encrypted data doesn't use crc and sets the value to 0.
-    ae2_encrypted: bool,
+    enabled: bool,
 }
 
 impl<R: ReadAndSupplyExpectedCRC32> Crc32Reader<R> {
@@ -29,6 +29,8 @@ impl<R: ReadAndSupplyExpectedCRC32> Crc32Reader<R> {
             inner,
             hasher: Hasher::new(),
             ae2_encrypted,
+            check: checksum,
+            enabled: !ae2_encrypted,
         }
     }
 
@@ -41,17 +43,48 @@ impl<R: ReadAndSupplyExpectedCRC32> Crc32Reader<R> {
     }
 }
 
+#[cold]
+fn invalid_checksum() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "Invalid checksum")
+}
+
 impl<R: ReadAndSupplyExpectedCRC32> Read for Crc32Reader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let count = match self.inner.read(buf) {
             Ok(0) if !buf.is_empty() && !self.check_matches()? && !self.ae2_encrypted => {
                 return Err(io::Error::new(io::ErrorKind::Other, "Invalid checksum"))
             }
-            Ok(n) => n,
-            Err(e) => return Err(e),
-        };
-        self.hasher.update(&buf[0..count]);
+            self.hasher.update(&buf[..count]);
+        }
         Ok(count)
+    }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
+        let start = buf.len();
+        let n = self.inner.read_to_end(buf)?;
+
+        if self.enabled {
+            self.hasher.update(&buf[start..]);
+            if !self.check_matches() {
+                return Err(invalid_checksum());
+            }
+        }
+
+        Ok(n)
+    }
+
+    fn read_to_string(&mut self, buf: &mut String) -> io::Result<usize> {
+        let start = buf.len();
+        let n = self.inner.read_to_string(buf)?;
+
+        if self.enabled {
+            self.hasher.update(&buf.as_bytes()[start..]);
+            if !self.check_matches() {
+                return Err(invalid_checksum());
+            }
+        }
+
+        Ok(n)
     }
 }
 
