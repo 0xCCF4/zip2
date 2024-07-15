@@ -16,6 +16,7 @@ use crate::types::{
 use crate::zipcrypto::{ZipCryptoReader, ZipCryptoReaderValid, ZipCryptoValidator};
 use indexmap::IndexMap;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs::create_dir_all;
 use std::io::{self, copy, prelude::*, sink, ErrorKind, SeekFrom};
@@ -416,10 +417,7 @@ pub(crate) fn make_reader<T: ReadAndSupplyExpectedCRC32>(
         #[cfg(feature = "xz")]
         CompressionMethod::Xz => {
             let reader = XzDecoder::new(reader);
-            Ok(ZipFileReader::Xz(Crc32Reader::new(
-                reader,
-                ae2_encrypted,
-            )))
+            Ok(ZipFileReader::Xz(Crc32Reader::new(reader, ae2_encrypted)))
         }
         _ => Err(UnsupportedArchive("Compression method not supported")),
     }
@@ -1743,8 +1741,8 @@ impl<'a, T: Read> Read for ReadBufferThenForward<'a, T> {
 struct ReadTillDataDescriptor<T: Read> {
     reader: T,
     data_descriptor_found: Option<ZipDataDescriptor>,
-    look_ahead_buffer: Vec<u8>,      // TODO: change this to VecDeque
-    number_read_total_actual: usize, // without look ahead buffer
+    look_ahead_buffer: VecDeque<u8>,
+    number_read_total_actual: usize, // read count, without look ahead buffer
 }
 
 impl<T: Read> ReadTillDataDescriptor<T> {
@@ -1754,7 +1752,7 @@ impl<T: Read> ReadTillDataDescriptor<T> {
         // fill the look ahead buffer
         reader.read_exact(&mut look_ahead_buffer)?;
 
-        let look_ahead_buffer = Vec::from(look_ahead_buffer);
+        let look_ahead_buffer = VecDeque::from(look_ahead_buffer);
 
         Ok(Self {
             reader,
@@ -1766,8 +1764,10 @@ impl<T: Read> ReadTillDataDescriptor<T> {
 }
 
 impl<T: Read> ReadTillDataDescriptor<T> {
-    fn has_found_data_descriptor(&self) -> Option<ZipDataDescriptor> {
-        let Ok(data_descriptor) = ZipDataDescriptor::interpret(&self.look_ahead_buffer) else {
+    fn has_found_data_descriptor(&mut self) -> Option<ZipDataDescriptor> {
+        let Ok(data_descriptor) =
+            ZipDataDescriptor::interpret(self.look_ahead_buffer.make_contiguous())
+        else {
             return None;
         };
 
@@ -1789,12 +1789,11 @@ impl<T: Read> ReadTillDataDescriptor<T> {
         let read_count = self.reader.read(&mut byte_buffer)?;
 
         if read_count > 0 {
-            let value = self.look_ahead_buffer.remove(0);
-            /* .ok_or(io::Error::new(
+            let value = self.look_ahead_buffer.pop_front().ok_or(io::Error::new(
                 io::ErrorKind::Other,
                 "Look ahead buffer is empty. This should not have happened!?",
-            ))?; */
-            self.look_ahead_buffer.push(byte_buffer[0]);
+            ))?;
+            self.look_ahead_buffer.push_back(byte_buffer[0]);
             self.number_read_total_actual += 1;
             Ok(Some(value))
         } else {

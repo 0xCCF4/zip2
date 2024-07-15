@@ -6,11 +6,11 @@ use std::io::prelude::*;
 use std::io::BufReader;
 
 use crate::read::lzma::LzmaDecoder;
+use crate::read::xz::XzDecoder;
 use crate::read::CryptoReader;
 use crc32fast::Hasher;
 use deflate64::Deflate64Decoder;
 use flate2::read::DeflateDecoder;
-use crate::read::xz::XzDecoder;
 
 /// Reader that validates the CRC32 when it reaches the EOF.
 pub struct Crc32Reader<R: ReadAndSupplyExpectedCRC32> {

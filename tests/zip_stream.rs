@@ -106,6 +106,6 @@ fn decompress_stream_with_data_descriptor_continue() {
         .expect("couldn't advance to next entry in zip file");
     match entry {
         None => (),
-        _ => assert!(false, "expected no more entries"),
+        _ => panic!("expected no more entries"),
     };
 }
