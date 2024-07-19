@@ -1010,6 +1010,8 @@ pub(crate) struct ZipDataDescriptor {
     pub uncompressed_size: u32,
 }
 
+impl Pod for crate::types::ZipDataDescriptor {}
+
 impl FixedSizeBlock for crate::types::ZipDataDescriptor {
     const MAGIC: spec::Magic = spec::Magic::DATA_DESCRIPTOR_SIGNATURE;
 
